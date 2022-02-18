@@ -9,6 +9,10 @@ import torch.nn as nn
 import copy
 import codecs
 import random
+from tqdm import tqdm
+
+torch.backends.cudnn.enabled=False
+torch.backends.cudnn.benchmark = True
 
 from datasets import make_rt_gender, make_rt_gender_op_posts
 from model import *
@@ -137,7 +141,7 @@ def train(model, data, optimizer, criterion, args, epoch):
   total_loss = 0
   total_topic_loss = 0
   num_batches = len(data)
-  for batch_num, batch in enumerate(data):
+  for batch_num, batch in enumerate(tqdm(data)):
 
     if args.alpha_sched2:
       p = (batch_num + epoch * num_batches)/(args.epochs * num_batches)
@@ -230,7 +234,7 @@ def evaluate(model, data, optimizer, criterion, args, datatype='Valid', writetop
   total_loss = 0
   total_topic_loss = 0
   with torch.no_grad():
-    for batch_num, batch in enumerate(data):
+    for batch_num, batch in enumerate(tqdm(data)):
       # print (len(batch.text))
       x, lens = batch.text
       y = batch.label
@@ -332,17 +336,26 @@ def main():
   print("[Model hyperparams]: {}".format(str(args)))
 
   cuda = torch.cuda.is_available() and args.cuda
-  device = torch.device("cpu") if not cuda else torch.device("cuda:"+str(args.gpu))
+  print(torch.cuda.is_available())
+  print(torch.cuda.device_count())
+  # device = torch.device("cpu") if not cuda else torch.device("cuda:"+str(args.gpu))
+  device = torch.device("cpu")
+  print(device)
   seed_everything(seed=1337, cuda=cuda)
   vectors = None #don't use pretrained vectors
   # vectors = load_pretrained_vectors(args.emsize)
 
+  if not torch.cuda.is_available():
+    device_index = -1
+  else:
+    device_index = 0
+
   # Load dataset iterators
   if args.data == "RT_GENDER":
-    iters, TEXT, LABEL, INDEX = make_rt_gender(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device, vectors=vectors, topics=False)
+    iters, TEXT, LABEL, INDEX = make_rt_gender(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device_index, vectors=vectors, topics=False)
     train_iter, val_iter, test_iter = iters
   elif args.data == "RT_GENDER_OP_POSTS":
-    iters, TEXT, LABEL, INDEX = make_rt_gender_op_posts(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device, vectors=vectors)
+    iters, TEXT, LABEL, INDEX = make_rt_gender_op_posts(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device_index, vectors=vectors)
     if len(iters) == 2:
       train_iter, test_iter = iters
       val_iter = test_iter
@@ -386,27 +399,33 @@ def main():
     attention = BahdanauAttention(attention_dim, attention_dim)
 
     model = Classifier(embedding, encoder, attention, attention_dim, nlabels, num_topics=args.num_topics)
+    print('model initialized')
 
   model.to(device)
+  print('Moved model to device, ', device)
 
   criterion = nn.CrossEntropyLoss()
   # topic_criterion = nn.KLDivLoss(size_average=False)
   topic_criterion = nn.CrossEntropyLoss()
   optimizer = torch.optim.Adam(model.parameters(), args.lr, amsgrad=True)
 
-  for p in model.parameters():
-    if not p.requires_grad:
-      print ("OMG", p)
-      p.requires_grad = True
-    p.data.uniform_(-0.5, 0.5)
-    # print (p.data.norm())
+  if not args.load:
+    for p in model.parameters():
+      if not p.requires_grad:
+        print ("OMG", p)
+        p.requires_grad = True
+      p.data.uniform_(-0.5, 0.5)
+      # print (p.data.norm())
 
   # trainloss = evaluate(best_model, train_iter, optimizer, criterion, args, datatype='train', writetopics=args.save_output_topics, itos=TEXT.vocab.itos)
   if args.load:
+    print(args.save_dir+"/"+args.model_name+"_bestmodel")
     if args.latest:
       best_model = torch.load(args.save_dir+"/"+args.model_name+"_latestmodel")
     else:
-      best_model = torch.load(args.save_dir+"/"+args.model_name+"_bestmodel")
+      # best_model = torch.load(args.save_dir+"/"+args.model_name+"_bestmodel")
+      best_model = torch.load(args.save_dir+"/"+args.model_name+"_bestmodel", map_location=torch.device(device))
+    print('Loaded the saved model')
   else:
     try:
       best_valid_loss = None
@@ -427,6 +446,7 @@ def main():
   if not args.load:
     trainloss = evaluate(best_model, train_iter, optimizer, criterion, args, datatype='train', writetopics=args.save_output_topics, itos=TEXT.vocab.itos, litos=LABEL.vocab.itos)
     valloss = evaluate(best_model, val_iter, optimizer, criterion, args, datatype='valid', writetopics=args.save_output_topics, itos=TEXT.vocab.itos, litos=LABEL.vocab.itos)
+  print('Start evaluating...')
   loss = evaluate(best_model, test_iter, optimizer, criterion, args, datatype=os.path.basename(args.test_file).replace(".txt", "").replace(".tsv", ""), writetopics=args.save_output_topics, itos=TEXT.vocab.itos, litos=LABEL.vocab.itos)
 
 
