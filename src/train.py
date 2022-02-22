@@ -346,9 +346,9 @@ def main():
   # vectors = load_pretrained_vectors(args.emsize)
 
   if not torch.cuda.is_available():
-    device_index = -1
-  else:
     device_index = 0
+  else:
+    device_index = -1
 
   # Load dataset iterators
   if args.data == "RT_GENDER":
