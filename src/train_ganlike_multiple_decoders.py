@@ -399,17 +399,26 @@ def main():
   print("[Model hyperparams]: {}".format(str(args)))
 
   cuda = torch.cuda.is_available() and args.cuda
-  device = torch.device("cpu") if not cuda else torch.device("cuda:"+str(args.gpu))
+  print(torch.cuda.is_available())
+  print(torch.cuda.device_count())
+  # device = torch.device("cpu") if not cuda else torch.device("cuda:"+str(args.gpu))
+  device = torch.device("cpu")
+  print(device)
   seed_everything(seed=1337, cuda=cuda)
   vectors = None #don't use pretrained vectors
   # vectors = load_pretrained_vectors(args.emsize)
 
+  if not torch.cuda.is_available():
+    device_index = 0
+  else:
+    device_index = -1
+
   # Load dataset iterators
   if args.data in ["RT_GENDER"]:
     if args.finetune:
-      iters, TEXT, LABEL, INDEX = make_rt_gender(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device, vectors=vectors, topics=False)
+      iters, TEXT, LABEL, INDEX = make_rt_gender(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device_index, vectors=vectors, topics=False)
     else:
-      iters, TEXT, LABEL, TOPICS, INDEX = make_rt_gender(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device, vectors=vectors, topics=True)
+      iters, TEXT, LABEL, TOPICS, INDEX = make_rt_gender(args.batch_size, base_path=args.base_path, train_file=args.train_file, valid_file=args.valid_file, test_file=args.test_file, device=device_index, vectors=vectors, topics=True)
     train_iter, val_iter, test_iter = iters
   else:
     assert False
@@ -447,9 +456,10 @@ def main():
     else:
       classifier_model = Classifier_GANLike_bottleneck(embedding, encoder, attention, attention_dim, nlabels, bottleneck_dim=args.bottleneck_dim)
       topic_decoder = [nn.Sequential(nn.Dropout(args.topic_drop), nn.Linear(args.bottleneck_dim, args.num_topics), nn.LogSoftmax())]
-
+      print('model initialized')
 
   classifier_model.to(device)
+  print('Moved model to device, ', device)
   topic_decoder[0].to(device)
 
   classify_criterion = nn.CrossEntropyLoss()
@@ -464,20 +474,24 @@ def main():
       p.requires_grad = True
     p.data.uniform_(-args.param_init, args.param_init)
 
-  for p in topic_decoder[0].parameters():
-    if not p.requires_grad:
-      print ("OMG", p)
-      p.requires_grad = True
-    p.data.uniform_(-args.param_init, args.param_init)
+  if not args.load:
+    for p in topic_decoder[0].parameters():
+      if not p.requires_grad:
+        print ("OMG", p)
+        p.requires_grad = True
+      p.data.uniform_(-args.param_init, args.param_init)
 
   classify_optim.set_parameters(classifier_model.parameters())
   topic_optim.set_parameters(topic_decoder[0].parameters())
 
   if args.load:
+    print(args.save_dir+"/"+args.model_name+"_bestmodel")
     if args.latest:
       best_model = torch.load(args.save_dir+"/"+args.model_name+"_latestmodel")
     else:
-      best_model = torch.load(args.save_dir+"/"+args.model_name+"_bestmodel")
+      # best_model = torch.load(args.save_dir+"/"+args.model_name+"_bestmodel")
+      best_model = torch.load(args.save_dir+"/"+args.model_name+"_bestmodel", map_location=torch.device(device))
+    print('Loaded the saved model')
   else:
     try:
       best_valid_loss = None
@@ -568,6 +582,7 @@ def main():
   if not args.load:
     trainloss = evaluate(best_model, topic_decoder, train_iter, classify_criterion, topic_criterion, args, datatype='train', itos=TEXT.vocab.itos, litos=LABEL.vocab.itos)
     valloss = evaluate(best_model, topic_decoder, val_iter, classify_criterion, topic_criterion, args, datatype='valid', itos=TEXT.vocab.itos, litos=LABEL.vocab.itos)
+  print('Start evaluating...')
   loss = evaluate(best_model, topic_decoder, test_iter, classify_criterion, topic_criterion, args, datatype=os.path.basename(args.test_file).replace(".txt", "").replace(".tsv", ""), itos=TEXT.vocab.itos, litos=LABEL.vocab.itos)
 
   if args.ood_test_file:

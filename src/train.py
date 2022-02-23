@@ -9,7 +9,8 @@ import torch.nn as nn
 import copy
 import codecs
 import random
-from tqdm import tqdm
+# from tqdm import tqdm
+from tqdm.notebook import trange, tqdm
 
 torch.backends.cudnn.enabled=False
 torch.backends.cudnn.benchmark = True
